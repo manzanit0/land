@@ -6,10 +6,13 @@ const BOOKMARKS_KEY = "land.bookmarks";
 const CACHE_KEY = "land.cache";
 const FILTERS_KEY = "land.filters";
 const ORDER_KEY = "land.order";
+const REPO_CACHE_KEY = "land.repo_archived";
 const CACHE_TTL_MS = 90 * 1000;
+const REPO_TTL_MS = 24 * 60 * 60 * 1000;
 const FORCE_MIN_MS = 5 * 1000;
 const REFRESH_MS = 5 * 60 * 1000;
 const MAX_ROWS = 8;
+const SEARCH_PAGE = 30;
 const UNDO_MS = 6000;
 
 const DEFAULT_BOOKMARKS = [];
@@ -22,7 +25,8 @@ const SECTIONS = [
         short: "ready to land",
         empty: "All clear — nothing to land.",
         defaultQuery:
-            "is:pr is:open draft:false author:@me review:approved"
+            "is:pr is:open draft:false author:@me " +
+            "archived:false review:approved"
     },
     {
         key: "review",
@@ -41,7 +45,8 @@ const SECTIONS = [
         short: "in flight",
         empty: "No drafts, no failing checks.",
         defaultQuery:
-            "is:pr is:open author:@me (status:failure OR draft:true)"
+            "is:pr is:open author:@me archived:false " +
+            "(status:failure OR draft:true)"
     },
     {
         key: "pending",
@@ -50,7 +55,8 @@ const SECTIONS = [
         short: "stuck on others",
         empty: "Nothing waiting on others.",
         defaultQuery:
-            "is:pr is:open draft:false author:@me review:required"
+            "is:pr is:open draft:false author:@me " +
+            "archived:false review:required"
     }
 ];
 
@@ -135,8 +141,12 @@ function ageClass(iso) {
     return "age-old";
 }
 
+function fullRepoFromUrl(repositoryUrl) {
+    return repositoryUrl.replace(API + "/repos/", "");
+}
+
 function repoFromUrl(repositoryUrl) {
-    const full = repositoryUrl.replace(API + "/repos/", "");
+    const full = fullRepoFromUrl(repositoryUrl);
     return full.slice(full.indexOf("/") + 1);
 }
 
@@ -231,24 +241,75 @@ function renderAll(data) {
     renderSummary(data);
 }
 
-async function searchPRs(query, perPage) {
-    const url = API + "/search/issues?advanced_search=true&per_page=" +
-        (perPage || MAX_ROWS) + "&sort=updated&order=" + getOrder() +
-        "&q=" + encodeURIComponent(query);
-    const res = await fetch(url, {
-        headers: {
-            "Accept": "application/vnd.github+json",
-            "Authorization": "Bearer " + getToken(),
-            "X-GitHub-Api-Version": "2022-11-28"
-        }
+function ghHeaders() {
+    return {
+        "Accept": "application/vnd.github+json",
+        "Authorization": "Bearer " + getToken(),
+        "X-GitHub-Api-Version": "2022-11-28"
+    };
+}
+
+function readRepoCache() {
+    try {
+        const stored = JSON.parse(
+            localStorage.getItem(REPO_CACHE_KEY) || "null");
+        if (stored && typeof stored === "object") return stored;
+    } catch (err) {}
+    return {};
+}
+
+async function fetchArchived(fullName) {
+    const res = await fetch(API + "/repos/" + fullName, {
+        headers: ghHeaders()
     });
+    if (!res.ok) return false;
+    const data = await res.json();
+    return Boolean(data.archived);
+}
+
+// The archived:false search qualifier cannot be trusted: GitHub only
+// reindexes a PR when it is touched, so PRs that were open when their
+// repository got archived keep a stale "not archived" flag in the
+// search index and still show up. Archived repos are therefore
+// filtered out client-side by checking each repo via the REST API,
+// with results cached for a day since archived status rarely changes.
+async function archivedRepos(fullNames) {
+    const cache = readRepoCache();
+    const now = Date.now();
+    const missing = fullNames.filter(name => {
+        const entry = cache[name];
+        return !entry || now - entry.ts > REPO_TTL_MS;
+    });
+    const checked = await Promise.all(
+        missing.map(name => fetchArchived(name).catch(() => false)));
+    missing.forEach((name, i) => {
+        cache[name] = { archived: checked[i], ts: now };
+    });
+    if (missing.length > 0) {
+        localStorage.setItem(REPO_CACHE_KEY, JSON.stringify(cache));
+    }
+    return new Set(fullNames.filter(name => cache[name].archived));
+}
+
+async function searchPRs(query) {
+    const url = API + "/search/issues?advanced_search=true&per_page=" +
+        SEARCH_PAGE + "&sort=updated&order=" + getOrder() +
+        "&q=" + encodeURIComponent(query);
+    const res = await fetch(url, { headers: ghHeaders() });
     if (res.status === 401) throw new Error("unauthorized");
     const limited = res.status === 429 || (res.status === 403 &&
         res.headers.get("x-ratelimit-remaining") === "0");
     if (limited) throw new Error("GitHub rate limit hit");
     if (!res.ok) throw new Error("GitHub error " + res.status);
     const data = await res.json();
-    return { items: data.items || [], total: data.total_count || 0 };
+    const items = data.items || [];
+    const names = [...new Set(
+        items.map(pr => fullRepoFromUrl(pr.repository_url)))];
+    const archived = await archivedRepos(names);
+    const kept = items.filter(
+        pr => !archived.has(fullRepoFromUrl(pr.repository_url)));
+    const total = (data.total_count || 0) - (items.length - kept.length);
+    return { items: kept, total: total };
 }
 
 function readCache() {
