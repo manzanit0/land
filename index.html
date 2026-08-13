@@ -83,6 +83,7 @@
     }
     #summary .n.ready { color: var(--green); }
     #summary .n.review { color: var(--purple); }
+    #summary .n.flight { color: var(--accent); }
     #summary .n.pending { color: var(--amber); }
     .meta { color: var(--muted); font-size: var(--fs-sm); }
     #status { font-variant-numeric: tabular-nums; }
@@ -156,14 +157,64 @@
         padding: 0;
     }
     #bm-edit:hover { color: var(--accent); text-decoration: underline; }
-    .grid {
+    .act {
         display: grid;
-        grid-template-columns: repeat(3, 1fr);
-        gap: 1.25rem;
+        grid-template-columns: repeat(2, minmax(280px, 420px));
+        gap: 1.5rem;
         align-items: start;
     }
+    #token-section { grid-column: 1 / -1; }
+    .watch-label {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+        margin: 3rem 0 1.25rem;
+        color: var(--muted);
+        font-size: var(--fs-sm);
+        font-weight: 500;
+    }
+    .watch-label::after {
+        content: "";
+        flex: 1;
+        border-top: 1px solid var(--border);
+    }
+    .watch {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 1.5rem 3rem;
+        align-items: start;
+    }
+    .act section, .watch section { min-width: 0; }
+    .watch section {
+        background: none;
+        border: none;
+        border-radius: 0;
+        overflow: visible;
+    }
+    .watch section > h2 {
+        border-bottom: none;
+        padding: 0 0 0.4rem;
+    }
+    .watch h2 .count { font-size: 1.1rem; }
+    .watch li.pr, .watch li.more { border-bottom: none; }
+    .watch li.pr a, .watch li.more a { padding: 0.35rem 0; }
+    .watch li.pr a:hover, .watch li.more a:hover {
+        background: none;
+    }
+    .watch li.pr a:hover .pr-title,
+    .watch li.more a:hover {
+        color: var(--accent);
+    }
+    .watch .filter-editor {
+        padding: 0.5rem 0;
+        border-bottom: none;
+    }
+    .watch .empty, .watch .error { padding: 0.25rem 0; }
+    @media (max-width: 1100px) {
+        .watch { grid-template-columns: 1fr; }
+    }
     @media (max-width: 900px) {
-        .grid { grid-template-columns: 1fr; }
+        .act { grid-template-columns: 1fr; }
     }
     #token-section { grid-column: 1 / -1; }
     section {
@@ -192,6 +243,7 @@
     }
     #ready-count.active { color: var(--green); }
     #review-count.active { color: var(--purple); }
+    #flight-count.active { color: var(--accent); }
     #pending-count.active { color: var(--amber); }
     h2 .filter-btn {
         margin-left: auto;
@@ -254,6 +306,13 @@
         text-decoration: none;
         color: inherit;
     }
+    li.pr a {
+        display: flex;
+        align-items: baseline;
+        gap: 1rem;
+    }
+    .pr-text { flex: 1; min-width: 0; }
+    .pr-sub .t-checks { color: var(--danger); }
     li.pr a:hover, li.more a:hover { background: var(--bg); }
     .pr-title {
         font-weight: 400;
@@ -368,36 +427,52 @@
     </form>
 </nav>
 
-<main class="grid">
-    <section>
-        <h2>
-            <span class="count" id="ready-count"></span>
-            Ready to land
-            <button class="filter-btn" id="ready-filter"
-                title="Edit this column's search filter">filter</button>
-        </h2>
-        <ul id="ready-list"><li class="empty">Loading…</li></ul>
-    </section>
+<main>
+    <div class="act">
+        <section>
+            <h2>
+                <span class="count" id="ready-count"></span>
+                Ready to land
+                <button class="filter-btn" id="ready-filter"
+                    title="Edit this column's search filter">filter</button>
+            </h2>
+            <ul id="ready-list"><li class="empty">Loading…</li></ul>
+        </section>
 
-    <section>
-        <h2>
-            <span class="count" id="review-count"></span>
-            On you
-            <button class="filter-btn" id="review-filter"
-                title="Edit this column's search filter">filter</button>
-        </h2>
-        <ul id="review-list"><li class="empty">Loading…</li></ul>
-    </section>
+        <section>
+            <h2>
+                <span class="count" id="review-count"></span>
+                On you
+                <button class="filter-btn" id="review-filter"
+                    title="Edit this column's search filter">filter</button>
+            </h2>
+            <ul id="review-list"><li class="empty">Loading…</li></ul>
+        </section>
+    </div>
 
-    <section>
-        <h2>
-            <span class="count" id="pending-count"></span>
-            Stuck on others
-            <button class="filter-btn" id="pending-filter"
-                title="Edit this column's search filter">filter</button>
-        </h2>
-        <ul id="pending-list"><li class="empty">Loading…</li></ul>
-    </section>
+    <p class="watch-label">Watching</p>
+
+    <div class="watch">
+        <section>
+            <h2>
+                <span class="count" id="flight-count"></span>
+                In flight
+                <button class="filter-btn" id="flight-filter"
+                    title="Edit this column's search filter">filter</button>
+            </h2>
+            <ul id="flight-list"><li class="empty">Loading…</li></ul>
+        </section>
+
+        <section>
+            <h2>
+                <span class="count" id="pending-count"></span>
+                Stuck on others
+                <button class="filter-btn" id="pending-filter"
+                    title="Edit this column's search filter">filter</button>
+            </h2>
+            <ul id="pending-list"><li class="empty">Loading…</li></ul>
+        </section>
+    </div>
 </main>
 
 <script src="app.js"></script>

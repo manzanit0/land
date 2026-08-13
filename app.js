@@ -32,7 +32,16 @@ const SECTIONS = [
         empty: "Nothing on your desk.",
         defaultQuery:
             "is:pr is:open -author:app/dependabot draft:false " +
-            "archived:false review-requested:@me"
+            "archived:false review-requested:@me status:success"
+    },
+    {
+        key: "flight",
+        list: "flight-list",
+        count: "flight-count",
+        short: "in flight",
+        empty: "No drafts, no failing checks.",
+        defaultQuery:
+            "is:pr is:open author:@me (status:failure OR draft:true)"
     },
     {
         key: "pending",
@@ -127,7 +136,8 @@ function ageClass(iso) {
 }
 
 function repoFromUrl(repositoryUrl) {
-    return repositoryUrl.replace(API + "/repos/", "");
+    const full = repositoryUrl.replace(API + "/repos/", "");
+    return full.slice(full.indexOf("/") + 1);
 }
 
 function searchUrl(query) {
@@ -174,7 +184,12 @@ function renderSection(section, result) {
         renderMessage(list, "empty", section.empty);
         return;
     }
-    const rows = result.items.slice(0, MAX_ROWS).map(pr => {
+    let items = result.items.slice(0, MAX_ROWS);
+    if (section.key === "flight") {
+        items = [...items].sort(
+            (a, b) => (a.draft ? 1 : 0) - (b.draft ? 1 : 0));
+    }
+    const rows = items.map(pr => {
         const sub = el("span", { class: "pr-sub" });
         sub.appendChild(document.createTextNode(
             repoFromUrl(pr.repository_url) + " #" +
@@ -183,12 +198,20 @@ function renderSection(section, result) {
             class: ageClass(pr.updated_at),
             text: relativeTime(pr.updated_at)
         }));
-        return el("li", { class: "pr" }, [
-            el("a", { href: pr.html_url }, [
+        if (section.key === "flight") {
+            sub.appendChild(document.createTextNode(" · "));
+            sub.appendChild(el("span", {
+                class: pr.draft ? "t-draft" : "t-checks",
+                text: pr.draft ? "draft" : "failing"
+            }));
+        }
+        const link = el("a", { href: pr.html_url }, [
+            el("div", { class: "pr-text" }, [
                 el("span", { class: "pr-title", text: pr.title }),
                 sub
             ])
         ]);
+        return el("li", { class: "pr" }, [link]);
     });
     if (total > MAX_ROWS) {
         rows.push(el("li", { class: "more" }, [
@@ -208,9 +231,9 @@ function renderAll(data) {
     renderSummary(data);
 }
 
-async function searchPRs(query) {
+async function searchPRs(query, perPage) {
     const url = API + "/search/issues?advanced_search=true&per_page=" +
-        MAX_ROWS + "&sort=updated&order=" + getOrder() +
+        (perPage || MAX_ROWS) + "&sort=updated&order=" + getOrder() +
         "&q=" + encodeURIComponent(query);
     const res = await fetch(url, {
         headers: {
@@ -260,7 +283,7 @@ function showTokenPrompt(refocus) {
         }
         return;
     }
-    const grid = document.querySelector(".grid");
+    const grid = document.querySelector(".act");
     const input = el("input", {
         id: "token-input",
         type: "password",
