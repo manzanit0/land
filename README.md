@@ -24,3 +24,12 @@ Then load it in Firefox:
 Temporary add-ons are removed when Firefox restarts. For a permanent
 install, upload the `.xpi` to [addons.mozilla.org](https://addons.mozilla.org/developers/)
 as an unlisted add-on and install the signed file it returns.
+
+## No add-on at all
+
+Alternatively, copy `index.html` and `app.js` into any local directory
+and open `index.html` in the browser — the page works as a plain file.
+Bookmark its `file://` URL, or set it as your Firefox homepage
+(Settings → Home → Custom URLs). Note that the browser stores the
+token and bookmarks per location, so moving the files means entering
+them again.
