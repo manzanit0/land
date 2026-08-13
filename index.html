@@ -1,0 +1,405 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>land</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%231a2233'/%3E%3Cpath d='M8 3.5v7M4.5 7.5L8 11l3.5-3.5' stroke='%233fb950' stroke-width='1.8' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+<style>
+    :root {
+        --bg: oklch(0.965 0.006 255);
+        --surface: oklch(0.99 0.003 255);
+        --border: oklch(0.9 0.008 255);
+        --text: oklch(0.25 0.015 255);
+        --muted: oklch(0.52 0.02 255);
+        --accent: oklch(0.5 0.16 255);
+        --on-accent: oklch(0.98 0.005 255);
+        --green: oklch(0.52 0.14 150);
+        --amber: oklch(0.52 0.12 80);
+        --purple: oklch(0.55 0.18 300);
+        --danger: oklch(0.55 0.19 25);
+        --fs-sm: 0.75rem;
+        --fs-base: 0.9375rem;
+        --fs-lg: 1.75rem;
+        --font-ui: "Helvetica Neue", Helvetica, "Segoe UI",
+            system-ui, Arial, sans-serif;
+        --font-data: ui-monospace, "SF Mono", Menlo, Consolas,
+            monospace;
+    }
+    @media (prefers-color-scheme: dark) {
+        :root {
+            --bg: oklch(0.17 0.012 255);
+            --surface: oklch(0.21 0.012 255);
+            --border: oklch(0.32 0.015 255);
+            --text: oklch(0.9 0.01 255);
+            --muted: oklch(0.62 0.02 255);
+            --accent: oklch(0.72 0.12 255);
+            --on-accent: oklch(0.15 0.02 255);
+            --green: oklch(0.72 0.15 150);
+            --amber: oklch(0.75 0.12 85);
+            --purple: oklch(0.72 0.14 300);
+            --danger: oklch(0.68 0.18 25);
+        }
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+        background: var(--bg);
+        color: var(--text);
+        font-family: var(--font-ui);
+        font-size: var(--fs-base);
+        line-height: 1.5;
+        padding: 2rem clamp(1rem, 4vw, 3rem);
+        max-width: 1200px;
+        margin: 0 auto;
+    }
+    a:focus-visible, button:focus-visible, input:focus-visible {
+        outline: 2px solid var(--accent);
+        outline-offset: 1px;
+    }
+    header {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        margin-bottom: 1.5rem;
+        flex-wrap: wrap;
+        gap: 0.5rem 1.5rem;
+    }
+    h1 {
+        font-size: var(--fs-lg);
+        font-weight: 700;
+        letter-spacing: -0.03em;
+        line-height: 1;
+    }
+    h1 .mark { color: var(--accent); }
+    #summary {
+        color: var(--muted);
+        font-size: var(--fs-sm);
+        margin-right: auto;
+    }
+    #summary .part + .part::before { content: " · "; }
+    #summary .n {
+        font-family: var(--font-data);
+        font-weight: 500;
+    }
+    #summary .n.ready { color: var(--green); }
+    #summary .n.review { color: var(--purple); }
+    #summary .n.pending { color: var(--amber); }
+    .meta { color: var(--muted); font-size: var(--fs-sm); }
+    #status { font-variant-numeric: tabular-nums; }
+    #status:not(:empty)::after { content: " · "; }
+    #status.warn { color: var(--amber); }
+    #status.error { color: var(--danger); }
+    .meta button {
+        background: none;
+        border: none;
+        color: var(--accent);
+        cursor: pointer;
+        font: inherit;
+        padding: 0;
+    }
+    .meta button:hover { text-decoration: underline; }
+    .bookmarks {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: baseline;
+        gap: 0.25rem 1rem;
+        margin-bottom: 1.5rem;
+    }
+    .bookmarks ul {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: baseline;
+        min-width: 0;
+    }
+    .bookmarks li { display: inline-flex; align-items: baseline; }
+    .bookmarks li + li::before {
+        content: "·";
+        color: var(--muted);
+        margin: 0 0.65rem;
+    }
+    .bookmarks a { color: inherit; text-decoration: none; }
+    .bookmarks a:hover {
+        color: var(--accent);
+        text-decoration: underline;
+    }
+    .bookmarks .none, .bookmarks .undo-note {
+        color: var(--muted);
+        font-size: var(--fs-sm);
+    }
+    .bookmarks .undo-note button {
+        background: none;
+        border: none;
+        color: var(--accent);
+        cursor: pointer;
+        font: inherit;
+        padding: 0;
+        margin-left: 0.3rem;
+    }
+    .bookmarks .undo-note button:hover { text-decoration: underline; }
+    .bookmarks .bm-remove {
+        background: none;
+        border: none;
+        color: var(--muted);
+        cursor: pointer;
+        font-size: var(--fs-sm);
+        padding: 0 0 0 0.35rem;
+    }
+    .bookmarks .bm-remove:hover { color: var(--danger); }
+    #bm-edit {
+        margin-left: auto;
+        background: none;
+        border: none;
+        color: var(--muted);
+        cursor: pointer;
+        font: inherit;
+        font-size: var(--fs-sm);
+        padding: 0;
+    }
+    #bm-edit:hover { color: var(--accent); text-decoration: underline; }
+    .grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 1.25rem;
+        align-items: start;
+    }
+    @media (max-width: 900px) {
+        .grid { grid-template-columns: 1fr; }
+    }
+    #token-section { grid-column: 1 / -1; }
+    section {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        overflow: hidden;
+    }
+    section > h2 {
+        font-size: var(--fs-base);
+        font-weight: 500;
+        padding: 0.65rem 1rem;
+        border-bottom: 1px solid var(--border);
+        display: flex;
+        align-items: baseline;
+        gap: 0.6rem;
+    }
+    h2 .count {
+        font-family: var(--font-data);
+        font-size: 1.35rem;
+        font-weight: 500;
+        font-variant-numeric: tabular-nums;
+        line-height: 1;
+        min-width: 1ch;
+        color: var(--muted);
+    }
+    #ready-count.active { color: var(--green); }
+    #review-count.active { color: var(--purple); }
+    #pending-count.active { color: var(--amber); }
+    h2 .filter-btn {
+        margin-left: auto;
+        background: none;
+        border: none;
+        color: var(--muted);
+        cursor: pointer;
+        font: inherit;
+        font-size: var(--fs-sm);
+        padding: 0;
+        opacity: 0.7;
+    }
+    h2 .filter-btn:hover {
+        color: var(--accent);
+        text-decoration: underline;
+        opacity: 1;
+    }
+    h2 .filter-btn.custom { color: var(--accent); opacity: 1; }
+    .filter-editor {
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
+        padding: 0.6rem 1rem;
+        border-bottom: 1px solid var(--border);
+    }
+    .filter-editor input {
+        width: 100%;
+        background: var(--bg);
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        color: var(--text);
+        padding: 0.35rem 0.6rem;
+        font: inherit;
+        font-size: var(--fs-sm);
+    }
+    .filter-editor .row {
+        display: flex;
+        gap: 0.75rem;
+        align-items: center;
+    }
+    .filter-editor .plain {
+        background: none;
+        border: none;
+        color: var(--muted);
+        cursor: pointer;
+        font: inherit;
+        font-size: var(--fs-sm);
+        padding: 0;
+    }
+    .filter-editor .plain:hover {
+        color: var(--accent);
+        text-decoration: underline;
+    }
+    ul { list-style: none; }
+    li.pr, li.more { border-bottom: 1px solid var(--border); }
+    li:last-child { border-bottom: none; }
+    li.pr a, li.more a {
+        display: block;
+        padding: 0.6rem 1rem;
+        text-decoration: none;
+        color: inherit;
+    }
+    li.pr a:hover, li.more a:hover { background: var(--bg); }
+    .pr-title {
+        font-weight: 400;
+        display: block;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+    .pr-sub {
+        font-size: var(--fs-sm);
+        font-variant-numeric: tabular-nums;
+        color: var(--muted);
+        display: block;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+    .pr-sub .age-warn { color: var(--amber); }
+    .pr-sub .age-old { color: var(--danger); }
+    li.more a {
+        color: var(--muted);
+        font-size: var(--fs-sm);
+        padding: 0.5rem 1rem;
+    }
+    li.more a:hover { color: var(--accent); }
+    .empty, .error {
+        padding: 1rem;
+        color: var(--muted);
+        font-size: var(--fs-sm);
+    }
+    .error { color: var(--danger); }
+    form.add-bookmark {
+        flex-basis: 100%;
+        display: flex;
+        gap: 0.5rem;
+        max-width: 32rem;
+    }
+    form.add-bookmark[hidden] { display: none; }
+    form.add-bookmark input {
+        flex: 1;
+        min-width: 0;
+        background: var(--bg);
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        color: var(--text);
+        padding: 0.35rem 0.6rem;
+        font: inherit;
+        font-size: var(--fs-sm);
+    }
+    form.add-bookmark button, .token-box .save, .filter-editor .save {
+        background: var(--accent);
+        border: none;
+        border-radius: 6px;
+        color: var(--on-accent);
+        cursor: pointer;
+        font: inherit;
+        font-size: var(--fs-sm);
+        font-weight: 500;
+        padding: 0.35rem 0.8rem;
+    }
+    .token-box {
+        padding: 1rem;
+        display: flex;
+        flex-direction: column;
+        gap: 0.6rem;
+    }
+    .token-box p { color: var(--muted); font-size: var(--fs-sm); }
+    .token-box input {
+        background: var(--bg);
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        color: var(--text);
+        padding: 0.45rem 0.6rem;
+        font: inherit;
+        font-size: var(--fs-sm);
+    }
+    .token-box a { color: var(--accent); }
+    .token-box .row { display: flex; gap: 0.6rem; align-items: center; }
+    .token-box .cancel {
+        background: none;
+        border: none;
+        color: var(--muted);
+        cursor: pointer;
+        font: inherit;
+        font-size: var(--fs-sm);
+        padding: 0;
+    }
+    .token-box .cancel:hover { text-decoration: underline; }
+</style>
+</head>
+<body>
+<header>
+    <h1>land<span class="mark">.</span></h1>
+    <p id="summary"></p>
+    <div class="meta">
+        <span id="status" aria-live="polite"></span><!--
+        --><button id="order" title="Toggle age sorting"></button>
+        &middot;
+        <button id="refresh" title="Shortcut: r">Refresh</button>
+        &middot;
+        <button id="change-token">Change token</button>
+    </div>
+</header>
+
+<nav class="bookmarks" aria-label="Bookmarks">
+    <ul id="bookmark-list"></ul>
+    <button id="bm-edit">Edit</button>
+    <form class="add-bookmark" id="bookmark-form" hidden>
+        <input id="bm-title" placeholder="Title" required>
+        <input id="bm-url" placeholder="https://…" type="url" required>
+        <button type="submit">Add</button>
+    </form>
+</nav>
+
+<main class="grid">
+    <section>
+        <h2>
+            <span class="count" id="ready-count"></span>
+            Ready to land
+            <button class="filter-btn" id="ready-filter"
+                title="Edit this column's search filter">filter</button>
+        </h2>
+        <ul id="ready-list"><li class="empty">Loading…</li></ul>
+    </section>
+
+    <section>
+        <h2>
+            <span class="count" id="review-count"></span>
+            On you
+            <button class="filter-btn" id="review-filter"
+                title="Edit this column's search filter">filter</button>
+        </h2>
+        <ul id="review-list"><li class="empty">Loading…</li></ul>
+    </section>
+
+    <section>
+        <h2>
+            <span class="count" id="pending-count"></span>
+            Stuck on others
+            <button class="filter-btn" id="pending-filter"
+                title="Edit this column's search filter">filter</button>
+        </h2>
+        <ul id="pending-list"><li class="empty">Loading…</li></ul>
+    </section>
+</main>
+
+<script src="app.js"></script>
+</body>
+</html>

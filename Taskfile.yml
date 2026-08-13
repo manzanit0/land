@@ -1,0 +1,24 @@
+version: "3"
+
+tasks:
+  bundle:
+    desc: Bundle the add-on into an .xpi for upload to addons.mozilla.org
+    # The version is read from manifest.json so the artifact name always
+    # matches what AMO will see, and stale bundles can't be confused
+    # with the current one.
+    vars:
+      VERSION:
+        sh: jq -r .version manifest.json
+    # Only the four files the add-on actually ships are zipped, at the
+    # archive root: AMO requires manifest.json at the top level and
+    # flags archives containing unrelated development files.
+    sources:
+      - manifest.json
+      - index.html
+      - app.js
+      - icon.svg
+    generates:
+      - land-{{.VERSION}}.xpi
+    cmds:
+      - rm -f land-{{.VERSION}}.xpi
+      - zip land-{{.VERSION}}.xpi manifest.json index.html app.js icon.svg
