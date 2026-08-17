@@ -8,11 +8,14 @@ locally in the browser.
 
 ## Jira
 
-A quiet strip above the footer can list your assigned Jira tickets.
-Click **Connect Jira** and enter your site URL, login email, and an
+A quiet strip above the footer can list your assigned Jira tickets
+as a mini kanban grouped by status. Credentials for both GitHub and
+Jira are managed from **Connections** in the header: each service
+can be connected, updated, or disconnected there. Jira needs your
+site URL, login email, and an
 [Atlassian API token](https://id.atlassian.com/manage-profile/security/api-tokens).
-Like the GitHub token, the credentials are stored only in the
-browser's localStorage and only ever sent to your Jira site.
+All credentials are stored only in the browser's localStorage and
+only ever sent to their own service.
 
 ## Install
 

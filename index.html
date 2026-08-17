@@ -88,8 +88,8 @@
     .meta { color: var(--muted); font-size: var(--fs-sm); }
     #status { font-variant-numeric: tabular-nums; }
     #status:not(:empty)::after { content: " · "; }
-    #status.warn { color: var(--amber); }
-    #status.error { color: var(--danger); }
+    #status .warn { color: var(--amber); }
+    #status .error { color: var(--danger); }
     .meta button {
         background: none;
         border: none;
@@ -99,6 +99,14 @@
         padding: 0;
     }
     .meta button:hover { text-decoration: underline; }
+    .meta kbd {
+        font-family: var(--font-data);
+        font-size: 0.6875rem;
+        color: var(--muted);
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        padding: 0 0.3em;
+    }
     .bookmarks {
         display: flex;
         flex-wrap: wrap;
@@ -159,11 +167,11 @@
     #bm-edit:hover { color: var(--accent); text-decoration: underline; }
     .act {
         display: grid;
-        grid-template-columns: repeat(2, minmax(280px, 420px));
+        grid-template-columns: repeat(2, minmax(280px, 540px));
         gap: 1.5rem;
         align-items: start;
     }
-    #token-section, #jira-section { grid-column: 1 / -1; }
+    #connections-section { grid-column: 1 / -1; }
     .watch-label {
         display: flex;
         align-items: center;
@@ -180,8 +188,8 @@
     }
     .watch {
         display: grid;
-        grid-template-columns: repeat(2, 1fr);
-        gap: 1.5rem 3rem;
+        grid-template-columns: repeat(2, minmax(280px, 540px));
+        gap: 1.5rem;
         align-items: start;
     }
     .act section, .watch section { min-width: 0; }
@@ -216,7 +224,29 @@
     @media (max-width: 900px) {
         .act { grid-template-columns: 1fr; }
     }
-    #token-section, #jira-section { grid-column: 1 / -1; }
+    /* On wide screens the two tiers sit side by side: act cards on
+       the left rails, watch lists on the right under their label.
+       Zone and gap arithmetic keeps all four rails the same width,
+       so the Jira lanes below align with them exactly. */
+    @media (min-width: 1650px) {
+        body { max-width: 2300px; }
+        body:not(.onboarding) main {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            grid-template-rows: auto auto;
+            grid-template-areas:
+                "act label"
+                "act watch";
+            column-gap: 1.5rem;
+            align-items: start;
+        }
+        body:not(.onboarding) .act { grid-area: act; }
+        body:not(.onboarding) .watch-label {
+            grid-area: label;
+            margin: 0 0 1.25rem;
+        }
+        body:not(.onboarding) .watch { grid-area: watch; }
+    }
     section {
         background: var(--surface);
         border: 1px solid var(--border);
@@ -254,14 +284,12 @@
         font: inherit;
         font-size: var(--fs-sm);
         padding: 0;
-        opacity: 0.7;
     }
     h2 .filter-btn:hover {
         color: var(--accent);
         text-decoration: underline;
-        opacity: 1;
     }
-    h2 .filter-btn.custom { color: var(--accent); opacity: 1; }
+    h2 .filter-btn.custom { color: var(--accent); }
     .filter-editor {
         display: flex;
         flex-direction: column;
@@ -297,6 +325,14 @@
         color: var(--accent);
         text-decoration: underline;
     }
+    .filter-editor .row a {
+        margin-left: auto;
+        color: var(--muted);
+        font-size: var(--fs-sm);
+    }
+    .filter-editor .row a:hover { color: var(--accent); }
+    .filter-editor .error { padding: 0; }
+    .filter-editor .error:empty { display: none; }
     ul { list-style: none; }
     li.pr, li.more { border-bottom: 1px solid var(--border); }
     li:last-child { border-bottom: none; }
@@ -312,7 +348,7 @@
         gap: 1rem;
     }
     .pr-text { flex: 1; min-width: 0; }
-    .pr-sub .t-checks { color: var(--danger); }
+    .pr-sub .t-checks, .pr-sub .t-changes { color: var(--danger); }
     li.pr a:hover, li.more a:hover { background: var(--bg); }
     .pr-title {
         font-weight: 400;
@@ -330,8 +366,8 @@
         text-overflow: ellipsis;
         white-space: nowrap;
     }
-    .pr-sub .age-warn { color: var(--amber); }
-    .pr-sub .age-old { color: var(--danger); }
+    .age-warn { color: var(--amber); }
+    .age-old { color: var(--amber); font-weight: 600; }
     li.more a {
         color: var(--muted);
         font-size: var(--fs-sm);
@@ -362,7 +398,7 @@
         font: inherit;
         font-size: var(--fs-sm);
     }
-    form.add-bookmark button, .token-box .save, .filter-editor .save {
+    form.add-bookmark button, .conn-form .save, .filter-editor .save {
         background: var(--accent);
         border: none;
         border-radius: 6px;
@@ -373,25 +409,26 @@
         font-weight: 500;
         padding: 0.35rem 0.8rem;
     }
-    .token-box {
-        padding: 1rem;
+    .conn-row {
         display: flex;
-        flex-direction: column;
-        gap: 0.6rem;
+        flex-wrap: wrap;
+        align-items: baseline;
+        gap: 0.35rem 1rem;
+        padding: 0.65rem 1rem;
+        border-bottom: 1px solid var(--border);
     }
-    .token-box p { color: var(--muted); font-size: var(--fs-sm); }
-    .token-box input {
-        background: var(--bg);
-        border: 1px solid var(--border);
-        border-radius: 6px;
-        color: var(--text);
-        padding: 0.45rem 0.6rem;
-        font: inherit;
+    .conn-row:last-child { border-bottom: none; }
+    .conn-name { font-weight: 500; min-width: 4rem; }
+    .conn-state {
+        color: var(--muted);
         font-size: var(--fs-sm);
+        margin-right: auto;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
     }
-    .token-box a { color: var(--accent); }
-    .token-box .row { display: flex; gap: 0.6rem; align-items: center; }
-    .token-box .cancel {
+    .conn-actions { display: flex; gap: 0.75rem; }
+    .conn-actions button {
         background: none;
         border: none;
         color: var(--muted);
@@ -400,37 +437,97 @@
         font-size: var(--fs-sm);
         padding: 0;
     }
-    .token-box .cancel:hover { text-decoration: underline; }
-    .token-box .error { padding: 0; }
+    .conn-actions button:hover {
+        color: var(--accent);
+        text-decoration: underline;
+    }
+    .conn-form {
+        flex-basis: 100%;
+        display: flex;
+        flex-direction: column;
+        gap: 0.6rem;
+        padding: 0.35rem 0 0.25rem;
+    }
+    .conn-form p { color: var(--muted); font-size: var(--fs-sm); }
+    .conn-form p.error { color: var(--danger); padding: 0; }
+    .conn-form a { color: var(--accent); }
+    .conn-form input {
+        background: var(--bg);
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        color: var(--text);
+        padding: 0.45rem 0.6rem;
+        font: inherit;
+        font-size: var(--fs-sm);
+    }
+    .conn-form .row { display: flex; gap: 0.6rem; align-items: center; }
+    .conn-form .cancel {
+        background: none;
+        border: none;
+        color: var(--muted);
+        cursor: pointer;
+        font: inherit;
+        font-size: var(--fs-sm);
+        padding: 0;
+    }
+    .conn-form .cancel:hover { text-decoration: underline; }
+    #welcome {
+        max-width: 36rem;
+        margin-bottom: 1.5rem;
+    }
+    .welcome-box {
+        padding: 1rem;
+        display: flex;
+        flex-direction: column;
+        gap: 0.75rem;
+    }
+    .welcome-box .conn-form { padding: 0; }
+    .welcome-box .welcome-note {
+        color: var(--muted);
+        font-size: var(--fs-sm);
+    }
+    body.onboarding .act > section,
+    body.onboarding .watch-label,
+    body.onboarding .watch { display: none; }
+    body.onboarding #connections-section { display: block; }
     .jira {
-        position: relative;
-        min-height: 1.4em;
         margin-top: 3rem;
         font-size: var(--fs-sm);
     }
+    .jira .watch-label { margin: 0 0 1rem; }
     .jira ul {
-        display: flex;
-        flex-wrap: wrap;
-        align-items: flex-start;
-        gap: 1.25rem 2rem;
+        display: grid;
+        grid-template-columns: repeat(2, minmax(280px, 540px));
+        gap: 1.5rem;
+        align-items: start;
     }
     .jira li {
-        flex: 1;
         display: flex;
         flex-direction: column;
         align-items: flex-start;
         gap: 0.35rem;
         min-width: 0;
     }
-    .jira li.jira-more { flex: 0 0 100%; }
+    .jira li.jira-more,
+    .jira li.jira-note,
+    .jira li.jira-error { grid-column: 1 / -1; }
+    @media (max-width: 1100px) {
+        .jira ul { grid-template-columns: 1fr; }
+    }
+    @media (min-width: 1650px) {
+        .jira ul {
+            grid-template-columns: repeat(4, minmax(280px, 540px));
+        }
+    }
     .jira .lane-label {
-        font-size: 0.6875rem;
-        font-weight: 600;
-        letter-spacing: 0.07em;
-        text-transform: uppercase;
+        font-size: var(--fs-sm);
+        font-weight: 500;
         color: var(--muted);
-        opacity: 0.8;
         white-space: nowrap;
+    }
+    .jira .lane-count {
+        font-family: var(--font-data);
+        font-variant-numeric: tabular-nums;
     }
     .jira a {
         display: inline-flex;
@@ -452,6 +549,13 @@
         white-space: nowrap;
         min-width: 0;
     }
+    .jira .jira-age {
+        color: var(--muted);
+        font-variant-numeric: tabular-nums;
+        white-space: nowrap;
+    }
+    .jira .jira-age.age-warn { color: var(--amber); }
+    .jira .jira-age.age-old { color: var(--amber); font-weight: 600; }
     .jira a:hover .jira-title {
         color: var(--accent);
         text-decoration: underline;
@@ -459,29 +563,21 @@
     .jira a.more-link { color: var(--muted); }
     .jira a.more-link:hover { color: var(--accent); }
     .jira .jira-note { color: var(--muted); }
-    .jira .jira-error { color: var(--danger); }
-    .jira-actions {
-        position: absolute;
-        top: 0;
-        right: 0;
-        display: flex;
-        gap: 0.75rem;
+    .jira .jira-error {
+        color: var(--danger);
+        flex-direction: row;
+        align-items: baseline;
+        gap: 0.5rem;
     }
-    .jira-actions button {
+    .jira .jira-error button {
         background: none;
         border: none;
-        color: var(--muted);
+        color: var(--accent);
         cursor: pointer;
         font: inherit;
         padding: 0;
     }
-    .jira-actions button:hover {
-        color: var(--accent);
-        text-decoration: underline;
-    }
-    #jira-disconnect { opacity: 0; }
-    .jira:hover #jira-disconnect,
-    #jira-disconnect:focus-visible { opacity: 0.8; }
+    .jira .jira-error button:hover { text-decoration: underline; }
     footer {
         margin-top: 3rem;
         text-align: center;
@@ -501,17 +597,17 @@
     <p id="summary"></p>
     <div class="meta">
         <span id="status" aria-live="polite"></span><!--
-        --><button id="order" title="Toggle age sorting"></button>
+        --><button id="order"></button>
         &middot;
-        <button id="refresh" title="Shortcut: r">Refresh</button>
+        <button id="refresh">refresh <kbd>r</kbd></button>
         &middot;
-        <button id="change-token">Change token</button>
+        <button id="connections">connections</button>
     </div>
 </header>
 
 <nav class="bookmarks" aria-label="Bookmarks">
     <ul id="bookmark-list"></ul>
-    <button id="bm-edit">Edit</button>
+    <button id="bm-edit">edit</button>
     <form class="add-bookmark" id="bookmark-form" hidden>
         <input id="bm-title" placeholder="Title" required>
         <input id="bm-url" placeholder="https://…" type="url" required>
@@ -567,12 +663,9 @@
     </div>
 </main>
 
-<nav class="jira" aria-label="Jira tickets">
+<nav class="jira" aria-label="Jira tickets" hidden>
+    <p class="watch-label">Jira</p>
     <ul id="jira-list"></ul>
-    <span class="jira-actions">
-        <button id="jira-connect" hidden>Connect Jira</button>
-        <button id="jira-disconnect" hidden>Disconnect</button>
-    </span>
 </nav>
 
 <footer>

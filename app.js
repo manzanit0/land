@@ -44,7 +44,7 @@ const SECTIONS = [
         empty: "Nothing on your desk.",
         defaultQuery:
             "is:pr is:open -author:app/dependabot draft:false " +
-            "archived:false review-requested:@me status:success"
+            "archived:false review-requested:@me"
     },
     {
         key: "flight",
@@ -67,6 +67,13 @@ const SECTIONS = [
             "archived:false review:required"
     }
 ];
+
+// Search results don't say why a PR matched, so PRs of yours that were
+// sent back with requested changes are fetched through their own query
+// and merged into "On you" carrying a flag that becomes their tag.
+const CHANGES_QUERY =
+    "is:pr is:open author:@me archived:false draft:false " +
+    "review:changes_requested";
 
 let hasData = false;
 let inFlight = false;
@@ -100,8 +107,12 @@ function getOrder() {
 }
 
 function updateOrderButton() {
-    document.getElementById("order").textContent =
-        getOrder() === "desc" ? "Newest first" : "Oldest first";
+    const button = document.getElementById("order");
+    const desc = getOrder() === "desc";
+    button.textContent = desc
+        ? "sort: newest first" : "sort: oldest first";
+    button.title = desc
+        ? "Switch to oldest first" : "Switch to newest first";
 }
 
 function effectiveQueries() {
@@ -122,10 +133,30 @@ function updateFilterButtons() {
     }
 }
 
-function setStatus(text, kind) {
+let ghStatus = { text: "", kind: "" };
+let jiraStatus = { text: "", kind: "" };
+
+function renderStatus() {
     const status = document.getElementById("status");
-    status.textContent = text;
-    status.className = kind || "";
+    const parts = [];
+    for (const part of [ghStatus, jiraStatus]) {
+        if (!part.text) continue;
+        if (parts.length > 0) {
+            parts.push(document.createTextNode(" · "));
+        }
+        parts.push(el("span", { class: part.kind, text: part.text }));
+    }
+    status.replaceChildren(...parts);
+}
+
+function setStatus(text, kind) {
+    ghStatus = { text: text, kind: kind || "" };
+    renderStatus();
+}
+
+function setJiraStatus(text, kind) {
+    jiraStatus = { text: text || "", kind: kind || "" };
+    renderStatus();
 }
 
 function fmtTime(ts) {
@@ -223,6 +254,13 @@ function renderSection(section, result) {
                 text: pr.draft ? "draft" : "failing"
             }));
         }
+        if (section.key === "review" && pr.changesRequested) {
+            sub.appendChild(document.createTextNode(" · "));
+            sub.appendChild(el("span", {
+                class: "t-changes",
+                text: "changes requested"
+            }));
+        }
         const link = el("a", { href: pr.html_url }, [
             el("div", { class: "pr-text" }, [
                 el("span", { class: "pr-title", text: pr.title }),
@@ -242,11 +280,39 @@ function renderSection(section, result) {
     list.replaceChildren(...rows);
 }
 
+let lastRendered = "";
+let pendingData = null;
+let hoveredList = null;
+
+function dataFingerprint(data) {
+    return JSON.stringify(SECTIONS.map(section => {
+        const result = data[section.key];
+        return [result.total, result.items.map(pr => [
+            pr.html_url, pr.title, pr.updated_at,
+            Boolean(pr.draft), Boolean(pr.changesRequested)
+        ])];
+    }));
+}
+
 function renderAll(data) {
     for (const section of SECTIONS) {
         renderSection(section, data[section.key]);
     }
     renderSummary(data);
+    lastRendered = dataFingerprint(data);
+    pendingData = null;
+}
+
+// A background sync must not move rows the user is aiming at, so a
+// re-render is skipped while the pointer rests on a list and applied
+// once it leaves. Unchanged data never re-renders at all.
+function scheduleRender(data) {
+    if (dataFingerprint(data) === lastRendered) return;
+    if (hoveredList) {
+        pendingData = data;
+        return;
+    }
+    renderAll(data);
 }
 
 function ghHeaders() {
@@ -320,13 +386,25 @@ async function searchPRs(query) {
     return { items: kept, total: total };
 }
 
+function mergeReview(base, changes) {
+    const flagged = changes.items.map(pr =>
+        Object.assign({}, pr, { changesRequested: true }));
+    const items = [...base.items, ...flagged].sort((a, b) => {
+        const diff = new Date(a.updated_at) - new Date(b.updated_at);
+        return getOrder() === "asc" ? diff : -diff;
+    });
+    return { items: items, total: base.total + changes.total };
+}
+
+// The cache keeps one entry per sort order so toggling the order
+// renders instantly from the last sync instead of refetching.
 function readCache() {
     try {
-        const cache = JSON.parse(
+        const stored = JSON.parse(
             localStorage.getItem(CACHE_KEY) || "null");
+        const cache = stored && stored[getOrder()];
         const current = JSON.stringify(effectiveQueries());
         if (cache && cache.ts && cache.data &&
-            cache.order === getOrder() &&
             JSON.stringify(cache.queries) === current) {
             return cache;
         }
@@ -335,70 +413,297 @@ function readCache() {
 }
 
 function writeCache(data) {
-    localStorage.setItem(CACHE_KEY, JSON.stringify({
+    const stored = {};
+    try {
+        const parsed = JSON.parse(
+            localStorage.getItem(CACHE_KEY) || "null");
+        if (parsed && typeof parsed === "object") {
+            if (parsed.asc) stored.asc = parsed.asc;
+            if (parsed.desc) stored.desc = parsed.desc;
+        }
+    } catch (err) {}
+    stored[getOrder()] = {
         ts: Date.now(),
         data: data,
-        queries: effectiveQueries(),
-        order: getOrder()
-    }));
+        queries: effectiveQueries()
+    };
+    localStorage.setItem(CACHE_KEY, JSON.stringify(stored));
 }
 
-function showTokenPrompt(refocus) {
-    const existing = document.getElementById("token-section");
-    if (existing) {
-        if (refocus) {
-            const openInput = document.getElementById("token-input");
-            if (openInput) openInput.focus();
-        }
-        return;
+let connExpanded = null;
+
+function connHost(url) {
+    try {
+        return new URL(url).host;
+    } catch (err) {
+        return url;
     }
-    const grid = document.querySelector(".act");
-    const input = el("input", {
-        id: "token-input",
-        type: "password",
-        placeholder: "ghp_… or github_pat_…"
+}
+
+function connServices() {
+    const jira = getJira();
+    return [
+        {
+            key: "github",
+            name: "GitHub",
+            state: getToken()
+                ? "token ···" + getToken().slice(-4) : "",
+            form: buildGithubForm,
+            disconnect: () => {
+                localStorage.removeItem(TOKEN_KEY);
+                localStorage.removeItem(CACHE_KEY);
+                hasData = false;
+                loadPRs(false);
+            }
+        },
+        {
+            key: "jira",
+            name: "Jira",
+            state: jira
+                ? jira.email + " · " + connHost(jira.siteUrl) : "",
+            form: buildJiraForm,
+            disconnect: () => {
+                localStorage.removeItem(JIRA_KEY);
+                localStorage.removeItem(JIRA_CACHE_KEY);
+                jiraHasData = false;
+                loadJira(false);
+            }
+        }
+    ];
+}
+
+function connForm(children, saveFn, done) {
+    const save = el("button", { class: "save", text: "Save" });
+    const cancel = el("button", {
+        class: "cancel",
+        type: "button",
+        text: "cancel"
     });
-    const save = el("button", { class: "save", text: "Save token" });
-    const link = el("a", {
+    const error = el("p", { class: "error" });
+    const node = el("div", { class: "conn-form" }, [
+        ...children,
+        el("div", { class: "row" }, [save, cancel]),
+        error
+    ]);
+    save.addEventListener("click", async () => {
+        error.textContent = "";
+        save.disabled = true;
+        try {
+            await saveFn();
+            done();
+        } catch (err) {
+            error.textContent = err.message;
+        } finally {
+            save.disabled = false;
+        }
+    });
+    cancel.addEventListener("click", () => done());
+    node.addEventListener("keydown", e => {
+        if (e.key === "Enter" &&
+            e.target instanceof HTMLInputElement) save.click();
+        if (e.key === "Escape") done();
+    });
+    return node;
+}
+
+async function verifyGithubToken(token) {
+    const res = await fetch(API + "/user", {
+        headers: {
+            "Accept": "application/vnd.github+json",
+            "Authorization": "Bearer " + token,
+            "X-GitHub-Api-Version": "2022-11-28"
+        }
+    });
+    if (res.status === 401) {
+        throw new Error("GitHub rejected the token");
+    }
+    if (!res.ok) throw new Error("GitHub error " + res.status);
+}
+
+function buildGithubForm(done) {
+    const intro = el("p", {
+        text: "Personal access token (classic, repo scope), stored " +
+            "only in this browser's localStorage. "
+    });
+    intro.appendChild(el("a", {
         href: "https://github.com/settings/tokens/new" +
             "?scopes=repo&description=Land%20homepage",
         text: "Create one on GitHub"
-    });
-    const intro = el("p", {
-        text: "Listing your pull requests needs a GitHub personal " +
-            "access token (classic, repo scope). It is stored only " +
-            "in this browser's localStorage. "
-    });
-    intro.appendChild(link);
+    }));
     intro.appendChild(document.createTextNode("."));
-    const row = el("div", { class: "row" }, [save]);
-    if (getToken()) {
-        const cancel = el("button", {
-            class: "cancel",
-            type: "button",
-            text: "Cancel"
-        });
-        cancel.addEventListener("click", () => section.remove());
-        row.appendChild(cancel);
-    }
-    const box = el("div", { class: "token-box" }, [intro, input, row]);
-    const section = el("section", { id: "token-section" }, [
-        el("h2", { text: "GitHub token" }),
-        box
-    ]);
-    save.addEventListener("click", () => {
+    const input = el("input", {
+        type: "password",
+        placeholder: "ghp_… or github_pat_…"
+    });
+    return connForm([intro, input], async () => {
         const value = input.value.trim();
-        if (!value) return;
+        if (!value) throw new Error("a token is required");
+        await verifyGithubToken(value);
         localStorage.setItem(TOKEN_KEY, value);
-        section.remove();
         loadPRs(true);
+    }, done);
+}
+
+function buildJiraForm(done) {
+    const stored = getJira();
+    const intro = el("p", {
+        text: "Site, login email, and an "
     });
-    input.addEventListener("keydown", e => {
-        if (e.key === "Enter") save.click();
-        if (e.key === "Escape") section.remove();
+    intro.appendChild(el("a", {
+        href: "https://id.atlassian.com/manage-profile/security/" +
+            "api-tokens",
+        text: "Atlassian API token"
+    }));
+    intro.appendChild(document.createTextNode(
+        ", stored only in this browser's localStorage."));
+    const site = el("input", {
+        placeholder: "https://yoursite.atlassian.net",
+        spellcheck: "false",
+        value: stored ? stored.siteUrl : ""
     });
-    grid.prepend(section);
-    if (refocus) input.focus();
+    const email = el("input", {
+        type: "email",
+        placeholder: "you@example.com",
+        spellcheck: "false",
+        value: stored ? stored.email : ""
+    });
+    const token = el("input", {
+        type: "password",
+        placeholder: "API token"
+    });
+    return connForm([intro, site, email, token], async () => {
+        const siteUrl = normalizeSiteUrl(site.value);
+        const emailValue = email.value.trim();
+        const tokenValue = token.value.trim();
+        if (!siteUrl || !emailValue || !tokenValue) {
+            throw new Error("all three fields are required");
+        }
+        await requestJiraPermission(siteUrl);
+        await connectJira(siteUrl, emailValue, tokenValue);
+        localStorage.removeItem(JIRA_CACHE_KEY);
+        jiraHasData = false;
+        loadJira(true);
+    }, done);
+}
+
+function showWelcome() {
+    if (document.getElementById("welcome")) return;
+    const intro = el("p", {
+        text: "Every new tab becomes a pull-request triage board: " +
+            "what is ready to land, what needs your review, what is " +
+            "in flight, and what is stuck on others."
+    });
+    const form = buildGithubForm(() => {});
+    form.querySelector(".save").textContent = "Connect GitHub";
+    form.querySelector(".cancel").remove();
+    const note = el("p", {
+        class: "welcome-note",
+        text: "Optional: connect Jira from Connections (top right) " +
+            "to see your assigned tickets as a small board at the " +
+            "bottom."
+    });
+    const section = el("section", { id: "welcome" }, [
+        el("h2", { text: "Welcome to land." }),
+        el("div", { class: "welcome-box" }, [intro, form, note])
+    ]);
+    document.querySelector("main").prepend(section);
+}
+
+// The welcome card and the Connections panel both carry the GitHub
+// form, so only one of them may be on screen: the panel supersedes
+// the card while open, and the card returns when it closes.
+function refreshWelcome() {
+    const wanted = document.body.classList.contains("onboarding") &&
+        !document.getElementById("connections-section");
+    const existing = document.getElementById("welcome");
+    if (wanted && !existing) showWelcome();
+    if (!wanted && existing) existing.remove();
+}
+
+function setOnboarding(on) {
+    document.body.classList.toggle("onboarding", on);
+    refreshWelcome();
+}
+
+function focusConnForm() {
+    const list = document.getElementById("conn-list");
+    if (!list) return;
+    const input = list.querySelector(".conn-form input");
+    if (input) input.focus();
+}
+
+function renderConnRows() {
+    const list = document.getElementById("conn-list");
+    if (!list) return;
+    const rows = connServices().map(service => {
+        const row = el("div", { class: "conn-row" });
+        row.appendChild(el("span", {
+            class: "conn-name",
+            text: service.name
+        }));
+        row.appendChild(el("span", {
+            class: "conn-state",
+            text: service.state || "not connected"
+        }));
+        const actions = el("div", { class: "conn-actions" });
+        const primary = el("button", {
+            text: service.state ? "update" : "connect"
+        });
+        primary.addEventListener("click", () => {
+            connExpanded =
+                connExpanded === service.key ? null : service.key;
+            renderConnRows();
+            focusConnForm();
+        });
+        actions.appendChild(primary);
+        if (service.state) {
+            const off = el("button", { text: "disconnect" });
+            off.addEventListener("click", () => {
+                service.disconnect();
+                connExpanded = null;
+                renderConnRows();
+            });
+            actions.appendChild(off);
+        }
+        row.appendChild(actions);
+        if (connExpanded === service.key) {
+            row.appendChild(service.form(() => {
+                connExpanded = null;
+                renderConnRows();
+            }));
+        }
+        return row;
+    });
+    list.replaceChildren(...rows);
+}
+
+function showConnections(expandKey, refocus) {
+    const existing = document.getElementById("connections-section");
+    if (existing) {
+        if (expandKey && connExpanded !== expandKey) {
+            connExpanded = expandKey;
+            renderConnRows();
+        }
+        if (refocus) focusConnForm();
+        return;
+    }
+    connExpanded = expandKey || null;
+    const close = el("button", { class: "filter-btn", text: "close" });
+    const heading = el("h2", {});
+    heading.appendChild(document.createTextNode("Connections"));
+    heading.appendChild(close);
+    const section = el("section", { id: "connections-section" }, [
+        heading,
+        el("div", { class: "conn-list", id: "conn-list" })
+    ]);
+    close.addEventListener("click", () => {
+        section.remove();
+        refreshWelcome();
+    });
+    document.querySelector(".act").prepend(section);
+    renderConnRows();
+    refreshWelcome();
+    if (refocus) focusConnForm();
 }
 
 function toggleFilterEditor(section) {
@@ -417,19 +722,39 @@ function toggleFilterEditor(section) {
     const save = el("button", { class: "save", text: "Save" });
     const reset = el("button", {
         class: "plain",
-        text: "Reset to default"
+        text: "reset to default"
     });
-    const cancel = el("button", { class: "plain", text: "Cancel" });
+    const cancel = el("button", { class: "plain", text: "cancel" });
+    const docs = el("a", {
+        href: "https://docs.github.com/en/search-github/" +
+            "searching-on-github/" +
+            "searching-issues-and-pull-requests",
+        text: "syntax reference"
+    });
+    const error = el("p", { class: "error" });
     const editor = el("div", { class: "filter-editor" }, [
         input,
-        el("div", { class: "row" }, [save, reset, cancel])
+        el("div", { class: "row" }, [save, reset, cancel, docs]),
+        error
     ]);
-    function apply(value) {
+    async function apply(value) {
         const overrides = getFilterOverrides();
         const trimmed = value.trim();
         if (!trimmed || trimmed === section.defaultQuery) {
             delete overrides[section.key];
         } else {
+            error.textContent = "";
+            save.disabled = true;
+            try {
+                await searchPRs(trimmed);
+            } catch (err) {
+                error.textContent = err.message.includes("422")
+                    ? "GitHub rejected this filter — check the syntax"
+                    : err.message;
+                return;
+            } finally {
+                save.disabled = false;
+            }
             overrides[section.key] = trimmed;
         }
         saveFilterOverrides(overrides);
@@ -451,13 +776,17 @@ function toggleFilterEditor(section) {
 
 async function loadPRs(force) {
     if (!getToken()) {
-        showTokenPrompt(false);
+        setOnboarding(true);
+        document.getElementById("summary").replaceChildren();
+        setStatus("");
+        lastRendered = "";
         for (const section of SECTIONS) {
             renderMessage(document.getElementById(section.list),
                 "empty", "Waiting for token.");
         }
         return;
     }
+    setOnboarding(false);
     if (inFlight) return;
     const now = Date.now();
     if (force && now - lastForce < FORCE_MIN_MS) return;
@@ -474,18 +803,21 @@ async function loadPRs(force) {
     inFlight = true;
     setStatus("syncing…");
     try {
-        const results = await Promise.all(
-            SECTIONS.map(section => searchPRs(getQuery(section))));
+        const results = await Promise.all([
+            ...SECTIONS.map(section => searchPRs(getQuery(section))),
+            searchPRs(CHANGES_QUERY)
+        ]);
         const data = {};
         SECTIONS.forEach((section, i) => { data[section.key] = results[i]; });
-        renderAll(data);
+        data.review = mergeReview(data.review, results[SECTIONS.length]);
+        scheduleRender(data);
         hasData = true;
         writeCache(data);
         setStatus("synced " + fmtTime(Date.now()));
     } catch (err) {
         if (err.message === "unauthorized") {
             localStorage.removeItem(TOKEN_KEY);
-            showTokenPrompt(true);
+            showConnections("github", true);
             setStatus("token rejected", "error");
             return;
         }
@@ -497,10 +829,11 @@ async function loadPRs(force) {
             setStatus(err.message + shown, kind);
             return;
         }
-        setStatus("failed", kind);
+        setStatus(err.message, kind);
+        lastRendered = "";
         for (const section of SECTIONS) {
             renderMessage(document.getElementById(section.list),
-                "error", err.message);
+                "empty", "unavailable");
         }
     } finally {
         inFlight = false;
@@ -537,11 +870,8 @@ function writeJiraCache(data) {
     }));
 }
 
-function updateJiraButtons(connected, reauth) {
-    const connect = document.getElementById("jira-connect");
-    connect.hidden = connected && !reauth;
-    connect.textContent = reauth ? "Reconnect Jira" : "Connect Jira";
-    document.getElementById("jira-disconnect").hidden = !connected;
+function setJiraVisible(visible) {
+    document.querySelector(".jira").hidden = !visible;
 }
 
 function groupJiraByStatus(issues) {
@@ -566,7 +896,7 @@ function groupJiraByStatus(issues) {
 }
 
 function renderJiraTickets(conn, data) {
-    updateJiraButtons(true, false);
+    setJiraVisible(true);
     const list = document.getElementById("jira-list");
     if (data.issues.length === 0) {
         list.replaceChildren(el("li", {
@@ -579,19 +909,31 @@ function renderJiraTickets(conn, data) {
     for (const group of groupJiraByStatus(data.issues)) {
         const lane = el("li", {});
         if (group.status) {
-            lane.appendChild(el("span", {
-                class: "lane-label",
-                text: group.status
+            const label = el("span", { class: "lane-label" });
+            label.appendChild(el("span", {
+                class: "lane-count",
+                text: String(group.tickets.length)
             }));
+            label.appendChild(
+                document.createTextNode(" " + group.status));
+            lane.appendChild(label);
         }
         for (const ticket of group.tickets) {
+            const children = [
+                el("span", { class: "jira-key", text: ticket.key }),
+                el("span", { class: "jira-title", text: ticket.summary })
+            ];
+            if (ticket.updated) {
+                children.push(el("span", {
+                    class: ("jira-age " +
+                        ageClass(ticket.updated)).trim(),
+                    text: relativeTime(ticket.updated)
+                }));
+            }
             lane.appendChild(el("a", {
                 href: conn.siteUrl + "/browse/" + ticket.key,
                 title: ticket.summary
-            }, [
-                el("span", { class: "jira-key", text: ticket.key }),
-                el("span", { class: "jira-title", text: ticket.summary })
-            ]));
+            }, children));
         }
         items.push(lane);
     }
@@ -609,9 +951,18 @@ function renderJiraTickets(conn, data) {
 }
 
 function renderJiraError(message, reauth) {
-    updateJiraButtons(true, reauth);
-    document.getElementById("jira-list").replaceChildren(
-        el("li", { class: "jira-error", text: "Jira: " + message }));
+    setJiraVisible(true);
+    const item = el("li", {
+        class: "jira-error",
+        text: "Jira: " + message
+    });
+    if (reauth) {
+        const fix = el("button", { text: "reconnect" });
+        fix.addEventListener("click",
+            () => showConnections("jira", true));
+        item.appendChild(fix);
+    }
+    document.getElementById("jira-list").replaceChildren(item);
 }
 
 function jiraHeaders(conn) {
@@ -627,7 +978,7 @@ async function fetchJiraIssues(conn) {
         new URLSearchParams({
             jql: JIRA_JQL,
             maxResults: String(JIRA_MAX),
-            fields: "summary,status"
+            fields: "summary,status,updated"
         });
     const res = await fetch(url, { headers: jiraHeaders(conn) });
     if (res.status === 401 || res.status === 403) {
@@ -643,7 +994,8 @@ async function fetchJiraIssues(conn) {
                 summary: issue.fields && issue.fields.summary || "",
                 status: status ? status.name : "",
                 category: status && status.statusCategory
-                    ? status.statusCategory.key : ""
+                    ? status.statusCategory.key : "",
+                updated: issue.fields && issue.fields.updated || ""
             };
         }),
         more: data.isLast === false
@@ -703,94 +1055,14 @@ function normalizeSiteUrl(value) {
     return url;
 }
 
-function showJiraPrompt() {
-    const existing = document.getElementById("jira-section");
-    if (existing) {
-        existing.querySelector("input").focus();
-        return;
-    }
-    const grid = document.querySelector(".act");
-    const stored = getJira();
-    const intro = el("p", {
-        text: "Showing assigned tickets needs your Jira site, the " +
-            "email you log in with, and an "
-    });
-    intro.appendChild(el("a", {
-        href: "https://id.atlassian.com/manage-profile/security/" +
-            "api-tokens",
-        text: "Atlassian API token"
-    }));
-    intro.appendChild(document.createTextNode(
-        ". They are stored only in this browser's localStorage."));
-    const siteInput = el("input", {
-        placeholder: "https://yoursite.atlassian.net",
-        spellcheck: "false",
-        value: stored ? stored.siteUrl : ""
-    });
-    const emailInput = el("input", {
-        type: "email",
-        placeholder: "you@example.com",
-        spellcheck: "false",
-        value: stored ? stored.email : ""
-    });
-    const tokenInput = el("input", {
-        type: "password",
-        placeholder: "API token"
-    });
-    const save = el("button", { class: "save", text: "Connect" });
-    const cancel = el("button", {
-        class: "cancel",
-        type: "button",
-        text: "Cancel"
-    });
-    const error = el("p", { class: "error" });
-    const box = el("div", { class: "token-box" }, [
-        intro, siteInput, emailInput, tokenInput,
-        el("div", { class: "row" }, [save, cancel]),
-        error
-    ]);
-    const section = el("section", { id: "jira-section" }, [
-        el("h2", { text: "Jira" }),
-        box
-    ]);
-    cancel.addEventListener("click", () => section.remove());
-    save.addEventListener("click", async () => {
-        const siteUrl = normalizeSiteUrl(siteInput.value);
-        const email = emailInput.value.trim();
-        const apiToken = tokenInput.value.trim();
-        if (!siteUrl || !email || !apiToken) return;
-        error.textContent = "";
-        save.disabled = true;
-        try {
-            await requestJiraPermission(siteUrl);
-            await connectJira(siteUrl, email, apiToken);
-            localStorage.removeItem(JIRA_CACHE_KEY);
-            jiraHasData = false;
-            section.remove();
-            loadJira(true);
-        } catch (err) {
-            error.textContent = err.message;
-        } finally {
-            save.disabled = false;
-        }
-    });
-    for (const field of [siteInput, emailInput, tokenInput]) {
-        field.addEventListener("keydown", e => {
-            if (e.key === "Enter") save.click();
-            if (e.key === "Escape") section.remove();
-        });
-    }
-    grid.prepend(section);
-    (stored ? tokenInput : siteInput).focus();
-}
-
 let jiraHasData = false;
 let jiraInFlight = false;
 
 async function loadJira(force) {
     const conn = getJira();
     if (!conn) {
-        updateJiraButtons(false, false);
+        setJiraVisible(false);
+        setJiraStatus("");
         document.getElementById("jira-list").replaceChildren();
         return;
     }
@@ -807,10 +1079,16 @@ async function loadJira(force) {
         renderJiraTickets(conn, data);
         jiraHasData = true;
         writeJiraCache(data);
+        setJiraStatus("");
     } catch (err) {
         if (err.message === "jira-reauth") {
+            setJiraStatus("");
             renderJiraError("token rejected", true);
-        } else if (!jiraHasData) {
+        } else if (jiraHasData && cache) {
+            setJiraStatus("jira — showing " + fmtTime(cache.ts) +
+                " data", "warn");
+        } else {
+            setJiraStatus("");
             renderJiraError(err.message, false);
         }
     } finally {
@@ -874,7 +1152,7 @@ function renderBookmarks() {
         return item;
     });
     items.push(...undoEntries.map(entry => {
-        const undo = el("button", { text: "Undo" });
+        const undo = el("button", { text: "undo" });
         undo.addEventListener("click", () => undoRemove(entry));
         const note = el("li", { class: "undo-note" });
         note.appendChild(document.createTextNode(
@@ -915,7 +1193,7 @@ document.getElementById("bm-edit").addEventListener("click", () => {
     editing = !editing;
     document.getElementById("bookmark-form").hidden = !editing;
     document.getElementById("bm-edit").textContent =
-        editing ? "Done" : "Edit";
+        editing ? "done" : "edit";
     renderBookmarks();
 });
 
@@ -923,8 +1201,20 @@ document.getElementById("order").addEventListener("click", () => {
     localStorage.setItem(ORDER_KEY,
         getOrder() === "desc" ? "asc" : "desc");
     updateOrderButton();
+    hasData = false;
     loadPRs(false);
 });
+
+for (const section of SECTIONS) {
+    const listEl = document.getElementById(section.list);
+    listEl.addEventListener("pointerenter", () => {
+        hoveredList = listEl;
+    });
+    listEl.addEventListener("pointerleave", () => {
+        hoveredList = null;
+        if (pendingData) renderAll(pendingData);
+    });
+}
 
 document.getElementById("refresh")
     .addEventListener("click", () => {
@@ -932,19 +1222,15 @@ document.getElementById("refresh")
         loadJira(true);
     });
 
-document.getElementById("change-token")
-    .addEventListener("click", () => showTokenPrompt(true));
-
-document.getElementById("jira-connect")
-    .addEventListener("click", () => showJiraPrompt());
-
-document.getElementById("jira-disconnect")
-    .addEventListener("click", () => {
-        localStorage.removeItem(JIRA_KEY);
-        localStorage.removeItem(JIRA_CACHE_KEY);
-        jiraHasData = false;
-        loadJira(false);
-    });
+document.getElementById("connections").addEventListener("click", () => {
+    const existing = document.getElementById("connections-section");
+    if (existing) {
+        existing.remove();
+        refreshWelcome();
+        return;
+    }
+    showConnections(null, false);
+});
 
 document.addEventListener("visibilitychange", () => {
     if (!document.hidden) {
