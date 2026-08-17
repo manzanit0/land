@@ -1,2 +1,4 @@
-.task
+.task/
+dist/
 *.xpi
+*.zip

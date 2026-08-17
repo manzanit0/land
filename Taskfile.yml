@@ -22,3 +22,40 @@ tasks:
     cmds:
       - rm -f land-{{.VERSION}}.xpi
       - zip land-{{.VERSION}}.xpi manifest.json index.html app.js icon.svg
+
+  bundle-chrome:
+    desc: Assemble the Chrome extension into dist/chrome and zip it
+    # The version is read from manifest.json (the Firefox one) because
+    # the Chrome manifest is derived from it below, so there is a
+    # single source of truth for version and metadata.
+    vars:
+      VERSION:
+        sh: jq -r .version manifest.json
+    sources:
+      - manifest.json
+      - index.html
+      - app.js
+      - icon.svg
+    generates:
+      - land-chrome-{{.VERSION}}.zip
+    cmds:
+      - rm -rf dist/chrome land-chrome-{{.VERSION}}.zip
+      - mkdir -p dist/chrome
+      # The Chrome manifest is generated rather than checked in:
+      # Chrome warns on the Firefox-only browser_specific_settings key
+      # and does not support SVG manifest icons, but everything else is
+      # identical, so deriving it keeps the two manifests in sync.
+      - >-
+        jq 'del(.browser_specific_settings)
+        | .icons = {"16": "icon-16.png", "48": "icon-48.png",
+        "128": "icon-128.png"}'
+        manifest.json > dist/chrome/manifest.json
+      # Chrome requires PNG icons; they are rasterized from the same
+      # SVG the Firefox add-on ships so the artwork stays single-source.
+      - rsvg-convert -w 16 -h 16 icon.svg -o dist/chrome/icon-16.png
+      - rsvg-convert -w 48 -h 48 icon.svg -o dist/chrome/icon-48.png
+      - rsvg-convert -w 128 -h 128 icon.svg -o dist/chrome/icon-128.png
+      - cp index.html app.js dist/chrome/
+      # -j flattens paths so manifest.json sits at the archive root,
+      # which the Chrome Web Store requires.
+      - zip -j land-chrome-{{.VERSION}}.zip dist/chrome/*
