@@ -8,8 +8,8 @@ locally in the browser.
 
 ## Jira
 
-A quiet strip above the footer can list your assigned Jira tickets
-as a mini kanban grouped by status. Credentials for both GitHub and
+A quiet strip between the action columns and the watch lists can
+show your assigned Jira tickets as a mini kanban grouped by status. Credentials for both GitHub and
 Jira are managed from **Connections** in the header: each service
 can be connected, updated, or disconnected there. Jira needs your
 site URL, login email, and an

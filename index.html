@@ -233,19 +233,20 @@
         body:not(.onboarding) main {
             display: grid;
             grid-template-columns: 1fr 1fr;
-            grid-template-rows: auto auto;
             grid-template-areas:
                 "act label"
-                "act watch";
+                "act watch"
+                "jira jira";
             column-gap: 1.5rem;
             align-items: start;
         }
         body:not(.onboarding) .act { grid-area: act; }
-        body:not(.onboarding) .watch-label {
+        body:not(.onboarding) main > .watch-label {
             grid-area: label;
             margin: 0 0 1.25rem;
         }
         body:not(.onboarding) .watch { grid-area: watch; }
+        body:not(.onboarding) main > .jira { grid-area: jira; }
     }
     section {
         background: var(--surface);
@@ -487,7 +488,7 @@
         font-size: var(--fs-sm);
     }
     body.onboarding .act > section,
-    body.onboarding .watch-label,
+    body.onboarding main > .watch-label,
     body.onboarding .watch { display: none; }
     body.onboarding #connections-section { display: block; }
     .jira {
@@ -638,6 +639,11 @@
         </section>
     </div>
 
+    <nav class="jira" aria-label="Jira tickets" hidden>
+        <p class="watch-label">Jira</p>
+        <ul id="jira-list"></ul>
+    </nav>
+
     <p class="watch-label">Watching</p>
 
     <div class="watch">
@@ -662,11 +668,6 @@
         </section>
     </div>
 </main>
-
-<nav class="jira" aria-label="Jira tickets" hidden>
-    <p class="watch-label">Jira</p>
-    <ul id="jira-list"></ul>
-</nav>
 
 <footer>
     Built with ❤️ in Madrid &middot;
