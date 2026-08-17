@@ -386,6 +386,56 @@ async function searchPRs(query) {
     return { items: kept, total: total };
 }
 
+// The search "status:" qualifier only tracks the legacy commit status
+// API, so PRs whose GitHub Actions check runs fail still count as
+// pending and cannot be excluded in the query. Check state is instead
+// resolved through one batched GraphQL request per sync, and failing
+// PRs are dropped from "On you" client-side.
+async function failingPRs(items) {
+    if (items.length === 0) return new Set();
+    const query =
+        "query($ids: [ID!]!) { nodes(ids: $ids) { " +
+        "... on PullRequest { id commits(last: 1) { nodes { commit { " +
+        "statusCheckRollup { state } } } } } } }";
+    const res = await fetch(API + "/graphql", {
+        method: "POST",
+        headers: ghHeaders(),
+        body: JSON.stringify({
+            query: query,
+            variables: { ids: items.map(pr => pr.node_id) }
+        })
+    });
+    if (!res.ok) return new Set();
+    const data = await res.json();
+    const failing = new Set();
+    for (const node of (data.data && data.data.nodes) || []) {
+        if (!node) continue;
+        const first = node.commits.nodes[0];
+        const rollup = first && first.commit.statusCheckRollup;
+        const state = rollup && rollup.state;
+        if (state === "FAILURE" || state === "ERROR") {
+            failing.add(node.id);
+        }
+    }
+    return failing;
+}
+
+// Failures here degrade gracefully: the section just keeps showing
+// failing-check PRs until the next sync succeeds.
+async function dropFailing(result) {
+    try {
+        const failing = await failingPRs(result.items);
+        if (failing.size === 0) return result;
+        const kept = result.items.filter(pr => !failing.has(pr.node_id));
+        return {
+            items: kept,
+            total: result.total - (result.items.length - kept.length)
+        };
+    } catch (err) {
+        return result;
+    }
+}
+
 function mergeReview(base, changes) {
     const flagged = changes.items.map(pr =>
         Object.assign({}, pr, { changesRequested: true }));
@@ -812,7 +862,8 @@ async function loadPRs(force) {
         ]);
         const data = {};
         SECTIONS.forEach((section, i) => { data[section.key] = results[i]; });
-        data.review = mergeReview(data.review, results[SECTIONS.length]);
+        data.review = await dropFailing(
+            mergeReview(data.review, results[SECTIONS.length]));
         scheduleRender(data);
         hasData = true;
         writeCache(data);
