@@ -611,10 +611,13 @@ function showWelcome() {
 
 // The welcome card and the Connections panel both carry the GitHub
 // form, so only one of them may be on screen: the panel supersedes
-// the card while open, and the card returns when it closes.
+// the card while open, and the card returns when it closes. A user
+// with Jira already connected is not new, so they get no welcome
+// pitch either — just the header's connections entry point.
 function refreshWelcome() {
     const wanted = document.body.classList.contains("onboarding") &&
-        !document.getElementById("connections-section");
+        !document.getElementById("connections-section") &&
+        !getJira();
     const existing = document.getElementById("welcome");
     if (wanted && !existing) showWelcome();
     if (!wanted && existing) existing.remove();
@@ -778,7 +781,7 @@ async function loadPRs(force) {
     if (!getToken()) {
         setOnboarding(true);
         document.getElementById("summary").replaceChildren();
-        setStatus("");
+        setStatus(getJira() ? "github not connected" : "");
         lastRendered = "";
         for (const section of SECTIONS) {
             renderMessage(document.getElementById(section.list),
