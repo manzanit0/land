@@ -14,6 +14,14 @@ const REFRESH_MS = 5 * 60 * 1000;
 const MAX_ROWS = 8;
 const SEARCH_PAGE = 30;
 const UNDO_MS = 6000;
+const JIRA_KEY = "land.jira";
+const JIRA_CACHE_KEY = "land.jira_cache";
+const JIRA_MAX = 6;
+const JIRA_JQL = "assignee = currentUser() AND " +
+    "statusCategory != Done AND status != \"To Do\" " +
+    "ORDER BY updated DESC";
+
+const ext = globalThis.browser || globalThis.chrome;
 
 const DEFAULT_BOOKMARKS = [];
 
@@ -499,6 +507,317 @@ async function loadPRs(force) {
     }
 }
 
+function getJira() {
+    try {
+        const conn = JSON.parse(localStorage.getItem(JIRA_KEY) || "null");
+        if (conn && conn.siteUrl && conn.email && conn.apiToken) {
+            return conn;
+        }
+    } catch (err) {}
+    return null;
+}
+
+function saveJira(conn) {
+    localStorage.setItem(JIRA_KEY, JSON.stringify(conn));
+}
+
+function readJiraCache() {
+    try {
+        const cache = JSON.parse(
+            localStorage.getItem(JIRA_CACHE_KEY) || "null");
+        if (cache && cache.ts && cache.data) return cache;
+    } catch (err) {}
+    return null;
+}
+
+function writeJiraCache(data) {
+    localStorage.setItem(JIRA_CACHE_KEY, JSON.stringify({
+        ts: Date.now(),
+        data: data
+    }));
+}
+
+function updateJiraButtons(connected, reauth) {
+    const connect = document.getElementById("jira-connect");
+    connect.hidden = connected && !reauth;
+    connect.textContent = reauth ? "Reconnect Jira" : "Connect Jira";
+    document.getElementById("jira-disconnect").hidden = !connected;
+}
+
+function groupJiraByStatus(issues) {
+    const order = { new: 0, indeterminate: 1, done: 2 };
+    const groups = [];
+    const byStatus = new Map();
+    for (const ticket of issues) {
+        let group = byStatus.get(ticket.status);
+        if (!group) {
+            group = {
+                status: ticket.status,
+                category: ticket.category,
+                tickets: []
+            };
+            byStatus.set(ticket.status, group);
+            groups.push(group);
+        }
+        group.tickets.push(ticket);
+    }
+    return groups.sort((a, b) =>
+        (order[a.category] ?? 3) - (order[b.category] ?? 3));
+}
+
+function renderJiraTickets(conn, data) {
+    updateJiraButtons(true, false);
+    const list = document.getElementById("jira-list");
+    if (data.issues.length === 0) {
+        list.replaceChildren(el("li", {
+            class: "jira-note",
+            text: "No Jira tickets assigned."
+        }));
+        return;
+    }
+    const items = [];
+    for (const group of groupJiraByStatus(data.issues)) {
+        const lane = el("li", {});
+        if (group.status) {
+            lane.appendChild(el("span", {
+                class: "lane-label",
+                text: group.status
+            }));
+        }
+        for (const ticket of group.tickets) {
+            lane.appendChild(el("a", {
+                href: conn.siteUrl + "/browse/" + ticket.key,
+                title: ticket.summary
+            }, [
+                el("span", { class: "jira-key", text: ticket.key }),
+                el("span", { class: "jira-title", text: ticket.summary })
+            ]));
+        }
+        items.push(lane);
+    }
+    if (data.more) {
+        items.push(el("li", { class: "jira-more" }, [
+            el("a", {
+                class: "more-link",
+                href: conn.siteUrl + "/issues/?jql=" +
+                    encodeURIComponent(JIRA_JQL),
+                text: "more →"
+            })
+        ]));
+    }
+    list.replaceChildren(...items);
+}
+
+function renderJiraError(message, reauth) {
+    updateJiraButtons(true, reauth);
+    document.getElementById("jira-list").replaceChildren(
+        el("li", { class: "jira-error", text: "Jira: " + message }));
+}
+
+function jiraHeaders(conn) {
+    return {
+        "Accept": "application/json",
+        "Authorization": "Basic " +
+            btoa(conn.email + ":" + conn.apiToken)
+    };
+}
+
+async function fetchJiraIssues(conn) {
+    const url = conn.siteUrl + "/rest/api/3/search/jql?" +
+        new URLSearchParams({
+            jql: JIRA_JQL,
+            maxResults: String(JIRA_MAX),
+            fields: "summary,status"
+        });
+    const res = await fetch(url, { headers: jiraHeaders(conn) });
+    if (res.status === 401 || res.status === 403) {
+        throw new Error("jira-reauth");
+    }
+    if (!res.ok) throw new Error("Jira error " + res.status);
+    const data = await res.json();
+    return {
+        issues: (data.issues || []).map(issue => {
+            const status = issue.fields && issue.fields.status;
+            return {
+                key: issue.key,
+                summary: issue.fields && issue.fields.summary || "",
+                status: status ? status.name : "",
+                category: status && status.statusCategory
+                    ? status.statusCategory.key : ""
+            };
+        }),
+        more: data.isLast === false
+    };
+}
+
+// Jira's REST API sends no CORS headers, so the page needs a host
+// permission for the site to fetch it. Chrome grants the wildcard
+// at install; Firefox MV3 treats host permissions as optional, so
+// the specific site is requested here, inside the click handler's
+// user gesture.
+// Unlike GitHub, Atlassian's API sends no CORS headers, so the
+// fetch only works from an extension page holding a host permission
+// for the site. On a plain page (file:// included) there is nothing
+// to request and the fetch is guaranteed to be blocked.
+async function requestJiraPermission(siteUrl) {
+    if (!ext || !ext.permissions) {
+        throw new Error("Atlassian blocks cross-origin requests: " +
+            "Jira needs land loaded as an extension, not a file:// " +
+            "or http(s) page");
+    }
+    const perm = { origins: [siteUrl + "/*"] };
+    let granted = false;
+    let failure = "";
+    try {
+        granted = await ext.permissions.request(perm);
+    } catch (err) {
+        failure = err.message;
+    }
+    if (granted) return;
+    const has = await ext.permissions.contains(perm)
+        .catch(() => false);
+    if (has) return;
+    if (failure) {
+        throw new Error("host permission unavailable (" + failure +
+            ") — reload the add-on so the new manifest applies, " +
+            "then retry");
+    }
+    throw new Error("site permission declined");
+}
+
+async function connectJira(siteUrl, email, apiToken) {
+    const conn = { siteUrl: siteUrl, email: email, apiToken: apiToken };
+    const res = await fetch(siteUrl + "/rest/api/3/myself", {
+        headers: jiraHeaders(conn)
+    });
+    if (res.status === 401 || res.status === 403) {
+        throw new Error("Jira rejected the credentials");
+    }
+    if (!res.ok) throw new Error("Jira error " + res.status);
+    saveJira(conn);
+}
+
+function normalizeSiteUrl(value) {
+    let url = value.trim().replace(/\/+$/, "");
+    if (url && !/^https:\/\//.test(url)) url = "https://" + url;
+    return url;
+}
+
+function showJiraPrompt() {
+    const existing = document.getElementById("jira-section");
+    if (existing) {
+        existing.querySelector("input").focus();
+        return;
+    }
+    const grid = document.querySelector(".act");
+    const stored = getJira();
+    const intro = el("p", {
+        text: "Showing assigned tickets needs your Jira site, the " +
+            "email you log in with, and an "
+    });
+    intro.appendChild(el("a", {
+        href: "https://id.atlassian.com/manage-profile/security/" +
+            "api-tokens",
+        text: "Atlassian API token"
+    }));
+    intro.appendChild(document.createTextNode(
+        ". They are stored only in this browser's localStorage."));
+    const siteInput = el("input", {
+        placeholder: "https://yoursite.atlassian.net",
+        spellcheck: "false",
+        value: stored ? stored.siteUrl : ""
+    });
+    const emailInput = el("input", {
+        type: "email",
+        placeholder: "you@example.com",
+        spellcheck: "false",
+        value: stored ? stored.email : ""
+    });
+    const tokenInput = el("input", {
+        type: "password",
+        placeholder: "API token"
+    });
+    const save = el("button", { class: "save", text: "Connect" });
+    const cancel = el("button", {
+        class: "cancel",
+        type: "button",
+        text: "Cancel"
+    });
+    const error = el("p", { class: "error" });
+    const box = el("div", { class: "token-box" }, [
+        intro, siteInput, emailInput, tokenInput,
+        el("div", { class: "row" }, [save, cancel]),
+        error
+    ]);
+    const section = el("section", { id: "jira-section" }, [
+        el("h2", { text: "Jira" }),
+        box
+    ]);
+    cancel.addEventListener("click", () => section.remove());
+    save.addEventListener("click", async () => {
+        const siteUrl = normalizeSiteUrl(siteInput.value);
+        const email = emailInput.value.trim();
+        const apiToken = tokenInput.value.trim();
+        if (!siteUrl || !email || !apiToken) return;
+        error.textContent = "";
+        save.disabled = true;
+        try {
+            await requestJiraPermission(siteUrl);
+            await connectJira(siteUrl, email, apiToken);
+            localStorage.removeItem(JIRA_CACHE_KEY);
+            jiraHasData = false;
+            section.remove();
+            loadJira(true);
+        } catch (err) {
+            error.textContent = err.message;
+        } finally {
+            save.disabled = false;
+        }
+    });
+    for (const field of [siteInput, emailInput, tokenInput]) {
+        field.addEventListener("keydown", e => {
+            if (e.key === "Enter") save.click();
+            if (e.key === "Escape") section.remove();
+        });
+    }
+    grid.prepend(section);
+    (stored ? tokenInput : siteInput).focus();
+}
+
+let jiraHasData = false;
+let jiraInFlight = false;
+
+async function loadJira(force) {
+    const conn = getJira();
+    if (!conn) {
+        updateJiraButtons(false, false);
+        document.getElementById("jira-list").replaceChildren();
+        return;
+    }
+    const cache = readJiraCache();
+    if (cache && !jiraHasData) {
+        renderJiraTickets(conn, cache.data);
+        jiraHasData = true;
+    }
+    if (!force && cache && Date.now() - cache.ts < CACHE_TTL_MS) return;
+    if (jiraInFlight) return;
+    jiraInFlight = true;
+    try {
+        const data = await fetchJiraIssues(conn);
+        renderJiraTickets(conn, data);
+        jiraHasData = true;
+        writeJiraCache(data);
+    } catch (err) {
+        if (err.message === "jira-reauth") {
+            renderJiraError("token rejected", true);
+        } else if (!jiraHasData) {
+            renderJiraError(err.message, false);
+        }
+    } finally {
+        jiraInFlight = false;
+    }
+}
+
 function getBookmarks() {
     try {
         const stored = JSON.parse(
@@ -608,13 +927,30 @@ document.getElementById("order").addEventListener("click", () => {
 });
 
 document.getElementById("refresh")
-    .addEventListener("click", () => loadPRs(true));
+    .addEventListener("click", () => {
+        loadPRs(true);
+        loadJira(true);
+    });
 
 document.getElementById("change-token")
     .addEventListener("click", () => showTokenPrompt(true));
 
+document.getElementById("jira-connect")
+    .addEventListener("click", () => showJiraPrompt());
+
+document.getElementById("jira-disconnect")
+    .addEventListener("click", () => {
+        localStorage.removeItem(JIRA_KEY);
+        localStorage.removeItem(JIRA_CACHE_KEY);
+        jiraHasData = false;
+        loadJira(false);
+    });
+
 document.addEventListener("visibilitychange", () => {
-    if (!document.hidden) loadPRs(false);
+    if (!document.hidden) {
+        loadPRs(false);
+        loadJira(false);
+    }
 });
 
 document.addEventListener("keydown", e => {
@@ -622,11 +958,18 @@ document.addEventListener("keydown", e => {
     const typing = target instanceof HTMLInputElement ||
         target instanceof HTMLTextAreaElement;
     if (typing || e.metaKey || e.ctrlKey || e.altKey) return;
-    if (e.key === "r") loadPRs(true);
+    if (e.key === "r") {
+        loadPRs(true);
+        loadJira(true);
+    }
 });
 
 renderBookmarks();
 updateFilterButtons();
 updateOrderButton();
 loadPRs(false);
-setInterval(() => loadPRs(false), REFRESH_MS);
+loadJira(false);
+setInterval(() => {
+    loadPRs(false);
+    loadJira(false);
+}, REFRESH_MS);

@@ -6,6 +6,14 @@ bookmarks bar. Data comes straight from the GitHub search API using a
 personal access token you provide on first run; everything is stored
 locally in the browser.
 
+## Jira
+
+A quiet strip above the footer can list your assigned Jira tickets.
+Click **Connect Jira** and enter your site URL, login email, and an
+[Atlassian API token](https://id.atlassian.com/manage-profile/security/api-tokens).
+Like the GitHub token, the credentials are stored only in the
+browser's localStorage and only ever sent to your Jira site.
+
 ## Install
 
 Bundle the add-on:

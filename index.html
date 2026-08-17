@@ -163,7 +163,7 @@
         gap: 1.5rem;
         align-items: start;
     }
-    #token-section { grid-column: 1 / -1; }
+    #token-section, #jira-section { grid-column: 1 / -1; }
     .watch-label {
         display: flex;
         align-items: center;
@@ -216,7 +216,7 @@
     @media (max-width: 900px) {
         .act { grid-template-columns: 1fr; }
     }
-    #token-section { grid-column: 1 / -1; }
+    #token-section, #jira-section { grid-column: 1 / -1; }
     section {
         background: var(--surface);
         border: 1px solid var(--border);
@@ -401,6 +401,87 @@
         padding: 0;
     }
     .token-box .cancel:hover { text-decoration: underline; }
+    .token-box .error { padding: 0; }
+    .jira {
+        position: relative;
+        min-height: 1.4em;
+        margin-top: 3rem;
+        font-size: var(--fs-sm);
+    }
+    .jira ul {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: flex-start;
+        gap: 1.25rem 2rem;
+    }
+    .jira li {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 0.35rem;
+        min-width: 0;
+    }
+    .jira li.jira-more { flex: 0 0 100%; }
+    .jira .lane-label {
+        font-size: 0.6875rem;
+        font-weight: 600;
+        letter-spacing: 0.07em;
+        text-transform: uppercase;
+        color: var(--muted);
+        opacity: 0.8;
+        white-space: nowrap;
+    }
+    .jira a {
+        display: inline-flex;
+        align-items: baseline;
+        gap: 0.4em;
+        min-width: 0;
+        max-width: 100%;
+        color: inherit;
+        text-decoration: none;
+    }
+    .jira .jira-key {
+        font-family: var(--font-data);
+        color: var(--muted);
+        white-space: nowrap;
+    }
+    .jira .jira-title {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        min-width: 0;
+    }
+    .jira a:hover .jira-title {
+        color: var(--accent);
+        text-decoration: underline;
+    }
+    .jira a.more-link { color: var(--muted); }
+    .jira a.more-link:hover { color: var(--accent); }
+    .jira .jira-note { color: var(--muted); }
+    .jira .jira-error { color: var(--danger); }
+    .jira-actions {
+        position: absolute;
+        top: 0;
+        right: 0;
+        display: flex;
+        gap: 0.75rem;
+    }
+    .jira-actions button {
+        background: none;
+        border: none;
+        color: var(--muted);
+        cursor: pointer;
+        font: inherit;
+        padding: 0;
+    }
+    .jira-actions button:hover {
+        color: var(--accent);
+        text-decoration: underline;
+    }
+    #jira-disconnect { opacity: 0; }
+    .jira:hover #jira-disconnect,
+    #jira-disconnect:focus-visible { opacity: 0.8; }
     footer {
         margin-top: 3rem;
         text-align: center;
@@ -485,6 +566,14 @@
         </section>
     </div>
 </main>
+
+<nav class="jira" aria-label="Jira tickets">
+    <ul id="jira-list"></ul>
+    <span class="jira-actions">
+        <button id="jira-connect" hidden>Connect Jira</button>
+        <button id="jira-disconnect" hidden>Disconnect</button>
+    </span>
+</nav>
 
 <footer>
     Built with ❤️ in Madrid &middot;
