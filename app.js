@@ -336,7 +336,7 @@ async function fetchArchived(fullName) {
     const res = await fetch(API + "/repos/" + fullName, {
         headers: ghHeaders()
     });
-    if (!res.ok) return false;
+    if (!res.ok) return null;
     const data = await res.json();
     return Boolean(data.archived);
 }
@@ -347,6 +347,9 @@ async function fetchArchived(fullName) {
 // search index and still show up. Archived repos are therefore
 // filtered out client-side by checking each repo via the REST API,
 // with results cached for a day since archived status rarely changes.
+// A failed check resolves to null rather than false so it is never
+// cached: caching it as "not archived" would wrongly stick for a
+// full day on a merely transient error.
 async function archivedRepos(fullNames) {
     const cache = readRepoCache();
     const now = Date.now();
@@ -355,14 +358,18 @@ async function archivedRepos(fullNames) {
         return !entry || now - entry.ts > REPO_TTL_MS;
     });
     const checked = await Promise.all(
-        missing.map(name => fetchArchived(name).catch(() => false)));
+        missing.map(name => fetchArchived(name).catch(() => null)));
+    let changed = false;
     missing.forEach((name, i) => {
+        if (checked[i] === null) return;
         cache[name] = { archived: checked[i], ts: now };
+        changed = true;
     });
-    if (missing.length > 0) {
+    if (changed) {
         localStorage.setItem(REPO_CACHE_KEY, JSON.stringify(cache));
     }
-    return new Set(fullNames.filter(name => cache[name].archived));
+    return new Set(fullNames.filter(
+        name => cache[name] && cache[name].archived));
 }
 
 async function searchPRs(query) {
