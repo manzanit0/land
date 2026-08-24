@@ -1,7 +1,7 @@
 {
     "manifest_version": 3,
     "name": "land",
-    "version": "1.5.0",
+    "version": "1.6.0",
     "description": "PR triage and bookmarks on every new tab.",
     "host_permissions": [
         "https://*.atlassian.net/*"

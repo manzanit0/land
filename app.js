@@ -341,6 +341,22 @@ async function fetchArchived(fullName) {
     return Boolean(data.archived);
 }
 
+// The 5 sections sync concurrently and can share repos between them, so
+// concurrent archivedRepos() calls are deduped here to avoid firing the
+// same GET /repos/{name} request more than once per sync.
+const archivedChecksInFlight = new Map();
+
+function fetchArchivedDeduped(fullName) {
+    if (archivedChecksInFlight.has(fullName)) {
+        return archivedChecksInFlight.get(fullName);
+    }
+    const promise = fetchArchived(fullName).finally(() => {
+        archivedChecksInFlight.delete(fullName);
+    });
+    archivedChecksInFlight.set(fullName, promise);
+    return promise;
+}
+
 // The archived:false search qualifier cannot be trusted: GitHub only
 // reindexes a PR when it is touched, so PRs that were open when their
 // repository got archived keep a stale "not archived" flag in the
@@ -358,7 +374,7 @@ async function archivedRepos(fullNames) {
         return !entry || now - entry.ts > REPO_TTL_MS;
     });
     const checked = await Promise.all(
-        missing.map(name => fetchArchived(name).catch(() => null)));
+        missing.map(name => fetchArchivedDeduped(name).catch(() => null)));
     let changed = false;
     missing.forEach((name, i) => {
         if (checked[i] === null) return;
@@ -863,14 +879,21 @@ async function loadPRs(force) {
     inFlight = true;
     setStatus("syncing…");
     try {
-        const results = await Promise.all([
-            ...SECTIONS.map(section => searchPRs(getQuery(section))),
+        const otherSections = SECTIONS.filter(s => s.key !== "review");
+        const reviewSection = SECTIONS.find(s => s.key === "review");
+        const reviewPromise = Promise.all([
+            searchPRs(getQuery(reviewSection)),
             searchPRs(CHANGES_QUERY)
+        ]).then(([review, changes]) =>
+            dropFailing(mergeReview(review, changes)));
+        const [reviewResult, ...otherResults] = await Promise.all([
+            reviewPromise,
+            ...otherSections.map(section => searchPRs(getQuery(section)))
         ]);
-        const data = {};
-        SECTIONS.forEach((section, i) => { data[section.key] = results[i]; });
-        data.review = await dropFailing(
-            mergeReview(data.review, results[SECTIONS.length]));
+        const data = { review: reviewResult };
+        otherSections.forEach((section, i) => {
+            data[section.key] = otherResults[i];
+        });
         scheduleRender(data);
         hasData = true;
         writeCache(data);
