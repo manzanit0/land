@@ -7,7 +7,11 @@ const CACHE_KEY = "land.cache";
 const FILTERS_KEY = "land.filters";
 const ORDER_KEY = "land.order";
 const REPO_CACHE_KEY = "land.repo_archived";
-const CACHE_TTL_MS = 90 * 1000;
+const BACKOFF_KEY = "land.gh_backoff";
+// Kept close to REFRESH_MS so tab switches and new tabs shortly
+// after a sync render from cache instead of firing another burst
+// of search requests.
+const CACHE_TTL_MS = 4 * 60 * 1000;
 const REPO_TTL_MS = 24 * 60 * 60 * 1000;
 const FORCE_MIN_MS = 5 * 1000;
 const REFRESH_MS = 5 * 60 * 1000;
@@ -388,15 +392,47 @@ async function archivedRepos(fullNames) {
         name => cache[name] && cache[name].archived));
 }
 
+// GitHub's secondary (abuse) rate limit answers 403 with request
+// budget still remaining, so status and headers alone cannot tell
+// it apart from other denials: the body message is what identifies
+// it. Returns the timestamp until which syncing should pause, or 0
+// when the response is not a rate limit.
+async function rateLimitBackoff(res) {
+    if (res.status !== 403 && res.status !== 429) return 0;
+    const retryAfter = Number(res.headers.get("retry-after"));
+    if (retryAfter > 0) return Date.now() + retryAfter * 1000;
+    if (res.headers.get("x-ratelimit-remaining") === "0") {
+        const reset = Number(res.headers.get("x-ratelimit-reset"));
+        if (reset > 0) return reset * 1000;
+    }
+    const message = await res.clone().json()
+        .then(data => String(data.message || ""))
+        .catch(() => "");
+    if (res.status === 403 && !/rate limit/i.test(message)) return 0;
+    // Rate limited with no usable header: GitHub's guidance is to
+    // wait at least one minute before retrying.
+    return Date.now() + 60 * 1000;
+}
+
+// Reads the shared sync pause, dropping it once expired. The pause
+// lives in localStorage so every open tab honors a backoff that any
+// one of them triggered.
+function backoffUntil() {
+    const ts = Number(localStorage.getItem(BACKOFF_KEY) || "0");
+    return ts > Date.now() ? ts : 0;
+}
+
 async function searchPRs(query) {
     const url = API + "/search/issues?advanced_search=true&per_page=" +
         SEARCH_PAGE + "&sort=updated&order=" + getOrder() +
         "&q=" + encodeURIComponent(query);
     const res = await fetch(url, { headers: ghHeaders() });
     if (res.status === 401) throw new Error("unauthorized");
-    const limited = res.status === 429 || (res.status === 403 &&
-        res.headers.get("x-ratelimit-remaining") === "0");
-    if (limited) throw new Error("GitHub rate limit hit");
+    const pauseUntil = await rateLimitBackoff(res);
+    if (pauseUntil) {
+        localStorage.setItem(BACKOFF_KEY, String(pauseUntil));
+        throw new Error("GitHub rate limit hit");
+    }
     if (!res.ok) throw new Error("GitHub error " + res.status);
     const data = await res.json();
     const items = data.items || [];
@@ -525,6 +561,7 @@ function connServices() {
             disconnect: () => {
                 localStorage.removeItem(TOKEN_KEY);
                 localStorage.removeItem(CACHE_KEY);
+                localStorage.removeItem(BACKOFF_KEY);
                 hasData = false;
                 loadPRs(false);
             }
@@ -875,25 +912,26 @@ async function loadPRs(force) {
     if (!force && cache && now - cache.ts < CACHE_TTL_MS) {
         return;
     }
+    const paused = backoffUntil();
+    if (paused) {
+        setStatus("rate limited — paused until " + fmtTime(paused),
+            "warn");
+        return;
+    }
     if (force) lastForce = now;
     inFlight = true;
     setStatus("syncing…");
     try {
-        const otherSections = SECTIONS.filter(s => s.key !== "review");
-        const reviewSection = SECTIONS.find(s => s.key === "review");
-        const reviewPromise = Promise.all([
-            searchPRs(getQuery(reviewSection)),
-            searchPRs(CHANGES_QUERY)
-        ]).then(([review, changes]) =>
-            dropFailing(mergeReview(review, changes)));
-        const [reviewResult, ...otherResults] = await Promise.all([
-            reviewPromise,
-            ...otherSections.map(section => searchPRs(getQuery(section)))
-        ]);
-        const data = { review: reviewResult };
-        otherSections.forEach((section, i) => {
-            data[section.key] = otherResults[i];
-        });
+        // Searches run one at a time: concurrent requests to the
+        // search endpoint trip GitHub's secondary rate limit even
+        // with request budget remaining.
+        const data = {};
+        for (const section of SECTIONS) {
+            data[section.key] = await searchPRs(getQuery(section));
+        }
+        const changes = await searchPRs(CHANGES_QUERY);
+        data.review = await dropFailing(
+            mergeReview(data.review, changes));
         scheduleRender(data);
         hasData = true;
         writeCache(data);
