@@ -6,6 +6,8 @@ bookmarks bar. Data comes straight from the GitHub search API using a
 personal access token you provide on first run; everything is stored
 locally in the browser.
 
+![land new-tab dashboard](screenshot.png)
+
 ## Jira
 
 A quiet strip between the action columns and the watch lists can
